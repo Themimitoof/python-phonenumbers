@@ -30,7 +30,7 @@ class NumberFormat(UnicodeMixin, ImmutableMixin):
                  format=None,
                  leading_digits_pattern=None,
                  national_prefix_formatting_rule=None,
-                 national_prefix_optional_when_formatting=False,
+                 national_prefix_optional_when_formatting=None,
                  domestic_carrier_code_formatting_rule=None):
         # pattern is a regex that is used to match the national (significant)
         # number. For example, the pattern "(20)(\d{4})(\d{4})" will match
@@ -93,7 +93,10 @@ class NumberFormat(UnicodeMixin, ImmutableMixin):
         # set to true. This will be inherited from the value set for the
         # territory in the XML file, unless a national_prefix_formatting_rule
         # is defined specifically for this NumberFormat.
-        self.national_prefix_optional_when_formatting = bool(national_prefix_optional_when_formatting)
+        if national_prefix_optional_when_formatting is not None:
+            self.national_prefix_optional_when_formatting = bool(national_prefix_optional_when_formatting)
+        else:
+            self.national_prefix_optional_when_formatting = None
 
         # This field specifies how any carrier code ($CC) together with the
         # first group ($FG) in the national significant number should be
@@ -110,7 +113,8 @@ class NumberFormat(UnicodeMixin, ImmutableMixin):
         self.leading_digits_pattern.extend(other.leading_digits_pattern)
         if other.national_prefix_formatting_rule is not None:
             self.national_prefix_formatting_rule = other.national_prefix_formatting_rule
-        self.national_prefix_optional_when_formatting = other.national_prefix_optional_when_formatting
+        if other.national_prefix_optional_when_formatting is not None:
+            self.national_prefix_optional_when_formatting = other.national_prefix_optional_when_formatting
         if other.domestic_carrier_code_formatting_rule is not None:
             self.domestic_carrier_code_formatting_rule = other.domestic_carrier_code_formatting_rule
 
@@ -129,12 +133,12 @@ class NumberFormat(UnicodeMixin, ImmutableMixin):
         # Generate a string that is valid Python input for the constructor.
         # Note that we use rpr (variant of repr), which generates its own quotes.
         result = unicod("NumberFormat(pattern=%s, format=%s") % (rpr(self.pattern), rpr(self.format))
-        if len(self.leading_digits_pattern) > 0:
+        if self.leading_digits_pattern:
             result += (unicod(", leading_digits_pattern=[%s]") %
                        unicod(", ").join([rpr(ld) for ld in self.leading_digits_pattern]))
         if self.national_prefix_formatting_rule is not None:
             result += unicod(", national_prefix_formatting_rule=%s") % rpr(self.national_prefix_formatting_rule)
-        if self.national_prefix_optional_when_formatting:
+        if self.national_prefix_optional_when_formatting is not None:
             result += unicod(", national_prefix_optional_when_formatting=%s") % str(self.national_prefix_optional_when_formatting)
         if self.domestic_carrier_code_formatting_rule is not None:
             result += unicod(", domestic_carrier_code_formatting_rule=%s") % rpr(self.domestic_carrier_code_formatting_rule)
@@ -147,32 +151,49 @@ class PhoneNumberDesc(UnicodeMixin, ImmutableMixin):
     @mutating_method
     def __init__(self,
                  national_number_pattern=None,
-                 possible_number_pattern=None,
-                 example_number=None):
+                 example_number=None,
+                 possible_length=None,
+                 possible_length_local_only=None):
         # The national_number_pattern is the pattern that a valid national
         # significant number would match. This specifies information such as
         # its total length and leading digits.
         self.national_number_pattern = force_unicode(national_number_pattern)  # None or Unicode string holding regexp
 
-        # The possible_number_pattern represents what a potentially valid
-        # phone number for this region may be written as. This is a superset
-        # of the national_number_pattern above and includes numbers that have
-        # the area code omitted. Typically the only restrictions here are in
-        # the number of digits.  This could be used to highlight tokens in a
-        # text that may be a phone number, or to quickly prune numbers that
-        # could not possibly be a phone number for this locale.
-        self.possible_number_pattern = force_unicode(possible_number_pattern)  # None or Unicode string holding regexp
-
         # An example national significant number for the specific type. It
         # should not contain any formatting information.
         self.example_number = force_unicode(example_number)  # None or Unicode string
+
+        # These represent the lengths a phone number from this region can be. They
+        # will be sorted from smallest to biggest. Note that these lengths are for
+        # the full number, without country calling code or national prefix. For
+        # example, for the Swiss number +41789270000, in local format 0789270000,
+        # this would be 9.
+        # This could be used to highlight tokens in a text that may be a phone
+        # number, or to quickly prune numbers that could not possibly be a phone
+        # number for this locale.
+        if possible_length is None:
+            possible_length = ()
+        self.possible_length = possible_length  # sequence of int
+
+        # These represent the lengths that only local phone numbers (without an area
+        # code) from this region can be. They will be sorted from smallest to
+        # biggest. For example, since the American number 456-1234 may be locally
+        # diallable, although not diallable from outside the area, 7 could be a
+        # possible value.
+        # This could be used to highlight tokens in a text that may be a phone
+        # number.
+        # To our knowledge, area codes are usually only relevant for some fixed-line
+        # and mobile numbers, so this field should only be set for those types of
+        # numbers (and the general description) - however there are exceptions for
+        # NANPA countries.
+        if possible_length_local_only is None:
+            possible_length_local_only = ()
+        self.possible_length_local_only = possible_length_local_only  # sequence of int
 
     def merge_from(self, other):
         """Merge information from another PhoneNumberDesc object into this one."""
         if other.national_number_pattern is not None:
             self.national_number_pattern = other.national_number_pattern
-        if other.possible_number_pattern is not None:
-            self.possible_number_pattern = other.possible_number_pattern
         if other.example_number is not None:
             self.example_number = other.example_number
 
@@ -194,11 +215,14 @@ class PhoneNumberDesc(UnicodeMixin, ImmutableMixin):
         if self.national_number_pattern is not None:
             result += unicod("%snational_number_pattern=%s") % (sep, rpr(self.national_number_pattern))
             sep = unicod(", ")
-        if self.possible_number_pattern is not None:
-            result += unicod("%spossible_number_pattern=%s") % (sep, rpr(self.possible_number_pattern))
-            sep = unicod(", ")
         if self.example_number is not None:
             result += unicod("%sexample_number=%s") % (sep, rpr(self.example_number))
+            sep = unicod(", ")
+        if self.possible_length:
+            result += unicod("%spossible_length=%s") % (sep, tuple(self.possible_length))
+            sep = unicod(", ")
+        if self.possible_length_local_only:
+            result += unicod("%spossible_length_local_only=%s") % (sep, tuple(self.possible_length_local_only))
             sep = unicod(", ")
         result += unicod(")")
         return result
@@ -209,6 +233,13 @@ class PhoneMetadata(UnicodeMixin, ImmutableMixin):
 
     This class is hand created based on phonemetadata.proto. Please refer to that file
     for detailed descriptions of the meaning of each field.
+
+    WARNING: This API isn't stable. It is considered libphonenumber-internal
+    and can change at any time. We only declare it as public for easy
+    inclusion in our build tools not in this package.  Clients should not
+    refer to this file, we do not commit to support backwards-compatibility or
+    to warn about breaking changes.
+
     """
     # If a region code is a key in this dict, metadata for that region is available.
     # The corresponding value of the map is either:
@@ -305,6 +336,7 @@ class PhoneMetadata(UnicodeMixin, ImmutableMixin):
                  short_code=None,
                  standard_rate=None,
                  carrier_specific=None,
+                 sms_services=None,
                  no_international_dialling=None,
                  country_code=None,
                  international_prefix=None,
@@ -324,13 +356,10 @@ class PhoneMetadata(UnicodeMixin, ImmutableMixin):
         # The general_desc contains information which is a superset of
         # descriptions for all types of phone numbers. If any element is
         # missing in the description of a specific type of number, the element
-        # will inherit from its counterpart in the general_desc. Every locale
-        # is assumed to have fixed line and mobile numbers - if these types
-        # are missing altogether, they will inherit all fields from the
-        # general_desc. For all other types, if the whole type is missing and
-        # it is relevant for the metadata, it will be given a
-        # national_number_pattern of "NA" and a possible_number_pattern of
-        # "NA".
+        # will inherit from its counterpart in the general_desc. For all types
+        # that are generally relevant to normal phone numbers, if the whole
+        # type is missing in the PhoneNumberMetadata XML file, it will not have
+        # national number data, and the possible lengths will be [-1].
         self.general_desc = general_desc  # None or PhoneNumberDesc
         self.fixed_line = fixed_line  # None or PhoneNumberDesc
         self.mobile = mobile  # None or PhoneNumberDesc
@@ -346,6 +375,7 @@ class PhoneMetadata(UnicodeMixin, ImmutableMixin):
         self.short_code = short_code  # None or PhoneNumberDesc
         self.standard_rate = standard_rate  # None or PhoneNumberDesc
         self.carrier_specific = carrier_specific  # None or PhoneNumberDesc
+        self.sms_services = sms_services  # None or PhoneNumberDesc
 
         # The rules here distinguish the numbers that are only able to be
         # dialled nationally.
@@ -476,13 +506,8 @@ class PhoneMetadata(UnicodeMixin, ImmutableMixin):
         # match.
         self.leading_digits = force_unicode(leading_digits)  # None or Unicode string holding regexp
 
-        # The leading zero in a phone number is meaningful in some countries
-        # (e.g.  Italy). This means they cannot be dropped from the national
-        # number when converting into international format. If leading zeros
-        # are possible for valid international numbers for this region/country
-        # then set this to true.  This only needs to be set for the region
-        # that is the main_country_for_code and all regions associated with
-        # that calling code will use the same setting.
+        # Deprecated: do not use. Will be deleted when there are no references
+        # to this later.
         self.leading_zero_possible = bool(leading_zero_possible)
 
         # This field is set when this country has implemented mobile number
@@ -556,6 +581,8 @@ class PhoneMetadata(UnicodeMixin, ImmutableMixin):
             result += unicod(",\n    standard_rate=%s") % self.standard_rate
         if self.carrier_specific is not None:
             result += unicod(",\n    carrier_specific=%s") % self.carrier_specific
+        if self.sms_services is not None:
+            result += unicod(",\n    sms_services=%s") % self.sms_services
         if self.no_international_dialling is not None:
             result += unicod(",\n    no_international_dialling=%s") % self.no_international_dialling
 
@@ -570,9 +597,9 @@ class PhoneMetadata(UnicodeMixin, ImmutableMixin):
         if self.national_prefix_transform_rule is not None:
             # Note that we use rpr() on self.national_prefix_transform_rule, which generates its own quotes
             result += unicod(",\n    national_prefix_transform_rule=%s") % rpr(self.national_prefix_transform_rule)
-        if len(self.number_format) > 0:
+        if self.number_format:
             result += unicod(",\n    number_format=[%s]") % unicod(',\n        ').join(map(u, self.number_format))
-        if len(self.intl_number_format) > 0:
+        if self.intl_number_format:
             result += unicod(",\n    intl_number_format=[%s]") % unicod(',\n        ').join(map(u, self.intl_number_format))
         if self.main_country_for_code:
             result += unicod(",\n    main_country_for_code=True")

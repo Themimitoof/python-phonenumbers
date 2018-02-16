@@ -137,11 +137,11 @@ class AsYouTypeFormatter(object):
     def _get_available_formats(self, leading_digits):
         if (self._is_complete_number and
             len(self._current_metadata.intl_number_format) > 0):
-            number_formats = self._current_metadata.intl_number_format
+            format_list = self._current_metadata.intl_number_format
         else:
-            number_formats = self._current_metadata.number_format
+            format_list = self._current_metadata.number_format
         national_prefix_is_used_by_country = (self._current_metadata.national_prefix is not None)
-        for this_format in number_formats:
+        for this_format in format_list:
             if (not national_prefix_is_used_by_country or self._is_complete_number or
                 this_format.national_prefix_optional_when_formatting or
                 _formatting_rule_has_first_group_only(this_format.national_prefix_formatting_rule)):
@@ -391,7 +391,7 @@ class AsYouTypeFormatter(object):
                  fullmatch(_PLUS_CHARS_PATTERN, next_char)))
 
     def _attempt_to_format_accrued_digits(self):
-        """Check to see if there is an exact pattern match for these digits. If so, we should use this
+        """Checks to see if there is an exact pattern match for these digits. If so, we should use this
         instead of any other formatting template whose leadingDigitsPattern also matches the input.
         """
         for number_format in self._possible_formats:
