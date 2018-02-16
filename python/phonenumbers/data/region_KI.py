@@ -2,16 +2,8 @@
 from ..phonemetadata import NumberFormat, PhoneNumberDesc, PhoneMetadata
 
 PHONE_METADATA_KI = PhoneMetadata(id='KI', country_code=686, international_prefix='00',
-    general_desc=PhoneNumberDesc(national_number_pattern='[2458]\\d{4}|3\\d{4,7}|7\\d{7}', possible_number_pattern='\\d{5,8}'),
-    fixed_line=PhoneNumberDesc(national_number_pattern='(?:[24]\\d|3[1-9]|50|8[0-5])\\d{3}', possible_number_pattern='\\d{5}', example_number='31234'),
-    mobile=PhoneNumberDesc(national_number_pattern='7\\d{7}', possible_number_pattern='\\d{8}', example_number='72012345'),
-    toll_free=PhoneNumberDesc(national_number_pattern='NA', possible_number_pattern='NA'),
-    premium_rate=PhoneNumberDesc(national_number_pattern='3001\\d{4}', possible_number_pattern='\\d{5,8}', example_number='30010000'),
-    shared_cost=PhoneNumberDesc(national_number_pattern='NA', possible_number_pattern='NA'),
-    personal_number=PhoneNumberDesc(national_number_pattern='NA', possible_number_pattern='NA'),
-    voip=PhoneNumberDesc(national_number_pattern='NA', possible_number_pattern='NA'),
-    pager=PhoneNumberDesc(national_number_pattern='NA', possible_number_pattern='NA'),
-    uan=PhoneNumberDesc(national_number_pattern='NA', possible_number_pattern='NA'),
-    voicemail=PhoneNumberDesc(national_number_pattern='NA', possible_number_pattern='NA'),
-    no_international_dialling=PhoneNumberDesc(national_number_pattern='NA', possible_number_pattern='NA'),
+    general_desc=PhoneNumberDesc(national_number_pattern='[2458]\\d{4}|3\\d{4,7}|[67]\\d{7}', possible_length=(5, 8)),
+    fixed_line=PhoneNumberDesc(national_number_pattern='(?:[24]\\d|3[1-9]|50|8[0-5])\\d{3}|(?:65(?:02[12]|12[56]|22[89]|[3-5]00)|7(?:27\\d{2}|3100|5(?:02[12]|12[56]|22[89]|[34](?:00|81)|500)))\\d{3}', example_number='31234', possible_length=(5, 8)),
+    mobile=PhoneNumberDesc(national_number_pattern='(?:6(?:200[01]|30[01]\\d)|7(?:200[01]|3(?:0[0-5]\\d|140)))\\d{3}', example_number='72001234', possible_length=(8,)),
+    voip=PhoneNumberDesc(national_number_pattern='30(?:0[01]\\d{2}|12(?:11|20))\\d{2}', example_number='30010000', possible_length=(8,)),
     national_prefix_for_parsing='0')

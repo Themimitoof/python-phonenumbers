@@ -50,6 +50,7 @@ KO_NUMBER1 = FrozenPhoneNumber(country_code=82, national_number=22123456)
 KO_NUMBER2 = FrozenPhoneNumber(country_code=82, national_number=322123456)
 KO_NUMBER3 = FrozenPhoneNumber(country_code=82, national_number=6421234567)
 KO_INVALID_NUMBER = FrozenPhoneNumber(country_code=82, national_number=1234)
+KO_MOBILE = FrozenPhoneNumber(country_code=82, national_number=101234567)
 US_NUMBER1 = FrozenPhoneNumber(country_code=1, national_number=6502530000)
 US_NUMBER2 = FrozenPhoneNumber(country_code=1, national_number=6509600000)
 US_NUMBER3 = FrozenPhoneNumber(country_code=1, national_number=2128120000)
@@ -174,6 +175,10 @@ class PhoneNumberGeocoderTest(unittest.TestCase):
         self.assertEqual("", description_for_number(KO_INVALID_NUMBER, _ENGLISH))
         self.assertEqual("", description_for_number(US_INVALID_NUMBER, _ENGLISH))
 
+    def testGetDescriptionForNonGeographicalNumberWithGeocodingPrefix(self):
+        # We have a geocoding prefix, but we shouldn't use it since this is not geographical.
+        self.assertEqual("South Korea", description_for_number(KO_MOBILE, _ENGLISH))
+
     def testCoverage(self):
         # Python version extra tests
         invalid_number = PhoneNumber(country_code=210, national_number=123456)
@@ -207,8 +212,8 @@ class PhoneNumberGeocoderTest(unittest.TestCase):
         TEST_GEOCODE_DATA['1650960'] = {'en': u("Mountain View, CA")}
 
         # Test the locale mapping
-        TEST_GEOCODE_DATA['8868'] = {'zh': u("Chinese"), 'zh_Hant': u("Hant-specific")}
-        tw_number = FrozenPhoneNumber(country_code=886, national_number=810080123)
+        TEST_GEOCODE_DATA['8862'] = {'zh': u("Chinese"), 'zh_Hant': u("Hant-specific")}
+        tw_number = FrozenPhoneNumber(country_code=886, national_number=221234567)
         self.assertEqual("Hant-specific",
                          description_for_number(tw_number, "zh", region="TW"))
-        del TEST_GEOCODE_DATA['8868']
+        del TEST_GEOCODE_DATA['8862']

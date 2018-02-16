@@ -24,7 +24,7 @@ import unittest
 from phonenumbers import PhoneNumberType, PhoneMetadata, NumberParseException
 from phonenumbers import phonenumberutil, PhoneNumber, is_emergency_number
 from phonenumbers import shortnumberinfo, ShortNumberCost, AsYouTypeFormatter
-from phonenumbers import PhoneNumberMatcher, Leniency
+from phonenumbers import PhoneNumberMatcher, Leniency, is_possible_short_number_for_region
 from phonenumbers.util import prnt
 from phonenumbers.re_util import fullmatch
 
@@ -32,7 +32,10 @@ from phonenumbers.re_util import fullmatch
 class ExampleNumbersTest(unittest.TestCase):
     """Verifies all of the example numbers in the metadata are valid and of
     the correct type. If no example number exists for a particular type, the
-    test still passes."""
+    test still passes  since not all types are relevant for all regions.
+    Tests that check the XML schema will ensure that an exampleNumber
+    node is present for every phone number description.
+    """
 
     def setUp(self):
         self.invalid_cases = []
@@ -128,7 +131,7 @@ class ExampleNumbersTest(unittest.TestCase):
             if metadata is not None:
                 desc = metadata.no_international_dialling
             try:
-                if desc.example_number is not None:
+                if desc is not None and desc.example_number is not None:
                     exampleNumber = phonenumberutil.parse(desc.example_number, regionCode)
 
             except NumberParseException:
@@ -136,7 +139,7 @@ class ExampleNumbersTest(unittest.TestCase):
                 prnt("Failed parse: %s" % e, file=sys.stderr)
 
             if (exampleNumber is not None and
-                phonenumberutil._can_be_internationally_dialled(exampleNumber)):
+                phonenumberutil.can_be_internationally_dialled(exampleNumber)):
                 self.wrong_type_cases.append(exampleNumber)
                 prnt("Number %s should not be internationally diallable" % exampleNumber, file=sys.stderr)
         self.assertEqual(0, len(self.wrong_type_cases))
@@ -166,13 +169,15 @@ class ExampleNumbersTest(unittest.TestCase):
 
     def testEveryTypeHasAnExampleNumber(self):
         for num_type in PhoneNumberType.values():
+            if num_type == PhoneNumberType.UNKNOWN:
+                continue
             exampleNumber = phonenumberutil.example_number_for_type(None, num_type)
             self.assertTrue(exampleNumber is not None,
                             msg="No example number found for type %s" % num_type)
 
     def testShortNumbersValidAndCorrectCost(self):
         invalid_string_cases = []
-        for regionCode in phonenumberutil.SUPPORTED_SHORT_REGIONS:
+        for regionCode in shortnumberinfo.SUPPORTED_SHORT_REGIONS:
             exampleShortNumber = shortnumberinfo._example_short_number(regionCode)
             phoneNumber = phonenumberutil.parse(exampleShortNumber, regionCode)
             if not shortnumberinfo.is_valid_short_number_for_region(phoneNumber, regionCode):
@@ -198,34 +203,47 @@ class ExampleNumbersTest(unittest.TestCase):
 
     def testEmergency(self):
         wrongTypeCounter = 0
-        for regionCode in phonenumberutil.SUPPORTED_SHORT_REGIONS:
+        for regionCode in shortnumberinfo.SUPPORTED_SHORT_REGIONS:
             metadata = PhoneMetadata.short_metadata_for_region(regionCode, None)
             desc = metadata.emergency
-            if desc.example_number is not None:
+            if desc is not None and desc.example_number is not None:
                 exampleNumber = desc.example_number
-                if (not fullmatch(re.compile(desc.possible_number_pattern), exampleNumber) or
+                phoneNumber = phonenumberutil.parse(exampleNumber, regionCode)
+                if (not is_possible_short_number_for_region(phoneNumber, regionCode) or
                     not is_emergency_number(exampleNumber, regionCode)):
                     wrongTypeCounter += 1
                     prnt("Emergency example number test failed for %s" % regionCode, file=sys.stderr)
-                elif shortnumberinfo.expected_cost_for_region(exampleNumber, regionCode) != ShortNumberCost.TOLL_FREE:
+                elif shortnumberinfo.expected_cost_for_region(phoneNumber, regionCode) != ShortNumberCost.TOLL_FREE:
                     wrongTypeCounter += 1
                     prnt("Emergency example number not toll free for %s" % regionCode, file=sys.stderr)
         self.assertEqual(0, wrongTypeCounter)
 
     def testCarrierSpecificShortNumbers(self):
         wrongTagCounter = 0
-        for regionCode in phonenumberutil.SUPPORTED_SHORT_REGIONS:
-            # Test the carrier-specific tag.
+        for regionCode in shortnumberinfo.SUPPORTED_SHORT_REGIONS:
             metadata = PhoneMetadata.short_metadata_for_region(regionCode, None)
             desc = metadata.carrier_specific
-            if desc.example_number is not None:
+            if desc is not None and desc.example_number is not None:
                 exampleNumber = desc.example_number
                 carrierSpecificNumber = phonenumberutil.parse(exampleNumber, regionCode)
-                if (not fullmatch(re.compile(desc.possible_number_pattern), exampleNumber) or
-                    not shortnumberinfo.is_carrier_specific(carrierSpecificNumber)):
+                if (not shortnumberinfo.is_possible_short_number_for_region(carrierSpecificNumber, regionCode) or
+                    not shortnumberinfo.is_carrier_specific_for_region(carrierSpecificNumber, regionCode)):
                     wrongTagCounter += 1
                     prnt("Carrier-specific test failed for %s" % regionCode, file=sys.stderr)
-            # TODO: Test other tags here
+        self.assertEqual(0, wrongTagCounter)
+
+    def testSmsServiceShortNumbers(self):
+        wrongTagCounter = 0
+        for regionCode in shortnumberinfo.SUPPORTED_SHORT_REGIONS:
+            metadata = PhoneMetadata.short_metadata_for_region(regionCode, None)
+            desc = metadata.sms_services
+            if desc is not None and desc.example_number is not None:
+                exampleNumber = desc.example_number
+                smsServiceNumber = phonenumberutil.parse(exampleNumber, regionCode)
+                if (not shortnumberinfo.is_possible_short_number_for_region(smsServiceNumber, regionCode) or
+                    not shortnumberinfo.is_sms_service_for_region(smsServiceNumber, regionCode)):
+                    wrongTagCounter += 1
+                    prnt("SMS service test failed for %s" % regionCode, file=sys.stderr)
         self.assertEqual(0, wrongTagCounter)
 
     def testIsCarrierSpecific(self):
@@ -258,8 +276,10 @@ class ExampleNumbersTest(unittest.TestCase):
         self.assertEqual("Country Code: 692 National Number: 7654321", str(number))
 
     def testMetadataPrint(self):
-        for callingCode in PhoneMetadata._region_available.keys():
-            metadata = PhoneMetadata.metadata_for_region("GB")
+        # Python version extra test
+        # Convert all metadata to strings to check the printing code doesn't blow up.
+        for region_code in PhoneMetadata._region_available.keys():
+            metadata = PhoneMetadata.metadata_for_region(region_code)
             str(metadata)
 
     def testWhitespaceInNationalPrefixForParsing(self):
@@ -316,12 +336,5 @@ class ExampleNumbersTest(unittest.TestCase):
     def testPrintShortMetadata(self):
         # Python version extra test.  Print string representation of short metadata.
         short_metadata = PhoneMetadata.short_metadata_for_region("GB")
-        self.assertEqual(r"""PhoneMetadata(id='GB', country_code=None, international_prefix=None,
-    general_desc=PhoneNumberDesc(national_number_pattern='[1-4679]\\d{2,5}', possible_number_pattern='\\d{3,6}'),
-    toll_free=PhoneNumberDesc(national_number_pattern='116(?:000|1(?:11|23))', possible_number_pattern='\\d{6}', example_number='116000'),
-    premium_rate=PhoneNumberDesc(national_number_pattern='NA', possible_number_pattern='NA'),
-    emergency=PhoneNumberDesc(national_number_pattern='112|999', possible_number_pattern='\\d{3}', example_number='112'),
-    short_code=PhoneNumberDesc(national_number_pattern='1(?:0[01]|1(?:[12]|[68]\\d{3})|2[123]|33|4(?:1|7\\d)|5\\d|70\\d|800\\d|9[15])|2(?:02|2(?:02|11|2)|3(?:02|45)|425)|3[13]3|4(?:0[02]|35[01]|44[45]|5\\d)|650|789|9(?:01|99)', possible_number_pattern='\\d{3,6}', example_number='150'),
-    standard_rate=PhoneNumberDesc(national_number_pattern='NA', possible_number_pattern='NA'),
-    carrier_specific=PhoneNumberDesc(national_number_pattern='NA', possible_number_pattern='NA'),
-    short_data=True)""", str(short_metadata))
+        result = str(short_metadata)
+        self.assertTrue(result.startswith("PhoneMetadata(id='GB', country_code=None, international_prefix=None"))

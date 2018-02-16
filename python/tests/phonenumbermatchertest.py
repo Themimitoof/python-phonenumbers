@@ -97,7 +97,7 @@ class PhoneNumberMatchTest(unittest.TestCase):
         self.assertEqual("PhoneNumberMatch(start=10, raw_string='1 800 234 45 67', "
                          "numobj=PhoneNumber(country_code=None, national_number=None, extension=None, "
                          "italian_leading_zero=None, number_of_leading_zeros=None, "
-                         "country_code_source=None, preferred_domestic_carrier_code=None))", repr(match))
+                         "country_code_source=0, preferred_domestic_carrier_code=None))", repr(match))
 
 
 class NumberContext(object):
@@ -887,6 +887,10 @@ class PhoneNumberMatcherTest(TestMetadataTestCase):
                         NumberContext("As I said on 03/10/2011, you may call me at ", ""),
                         # With trailing numbers after a comma. The 45 should not be considered an extension.
                         NumberContext("", ", 45 days a year"),
+                        # When matching we don't consider semicolon along with legitimate extension
+                        # symbol to indicate an extension. The 7246433 should not be considered an
+                        # extension.
+                        NumberContext("", ";x 7246433"),
                         # With a postfix stripped off as it looks like the start of another number.
                         NumberContext("Call ", "/x12 more"),
                         ]

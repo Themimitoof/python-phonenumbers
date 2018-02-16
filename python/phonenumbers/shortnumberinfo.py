@@ -21,14 +21,32 @@ Note most commercial short numbers are not handled here, but by phonenumberutil.
 import re
 
 from .re_util import fullmatch
-from .util import U_EMPTY_STRING
+from .util import U_EMPTY_STRING, prnt
 from .phonemetadata import PhoneMetadata
 from .phonenumber import PhoneNumber
 from .phonenumberutil import _extract_possible_number, _PLUS_CHARS_PATTERN
 from .phonenumberutil import normalize_digits_only, region_codes_for_country_code
 from .phonenumberutil import national_significant_number
-from .phonenumberutil import _is_number_possible_for_desc, _is_number_matching_desc
+from .phonenumberutil import _is_number_matching_desc, _match_national_number
 
+
+# Import auto-generated data structures
+try:
+    from .shortdata import _AVAILABLE_REGION_CODES as _AVAILABLE_SHORT_REGION_CODES
+except ImportError:  # pragma no cover
+    # Before the generated code exists, the shortdata/ directory is empty.
+    # The generation process imports this module, creating a circular
+    # dependency.  The hack below works around this.
+    import os
+    import sys
+    if (os.path.basename(sys.argv[0]) == "buildmetadatafromxml.py" or
+        os.path.basename(sys.argv[0]) == "buildprefixdata.py"):
+        prnt("Failed to import generated shortdata (but OK as during autogeneration)", file=sys.stderr)
+        _AVAILABLE_SHORT_REGION_CODES = []
+    else:
+        raise
+
+SUPPORTED_SHORT_REGIONS = _AVAILABLE_SHORT_REGION_CODES
 
 # In these countries, if extra digits are added to an emergency number, it no longer connects
 # to the emergency service.
@@ -43,26 +61,31 @@ class ShortNumberCost(object):
     UNKNOWN_COST = 3
 
 
-def is_possible_short_number_for_region(short_number, region_dialing_from):
+def _region_dialing_from_matches_number(numobj, region_dialing_from):
+    """Helper method to check that the country calling code of the number matches
+    the region it's being dialed from."""
+    region_codes = region_codes_for_country_code(numobj.country_code)
+    return (region_dialing_from in region_codes)
+
+
+def is_possible_short_number_for_region(short_numobj, region_dialing_from):
     """Check whether a short number is a possible number when dialled from a
     region. This provides a more lenient check than
     is_valid_short_number_for_region.
 
     Arguments:
-    short_number -- the short number to check as a PhoneNumber object or as
-              a string.  (The string variant is deprecated, and will be
-              removed in the next release.)
+    short_numobj -- the short number to check as a PhoneNumber object.
     region_dialing_from -- the region from which the number is dialed
 
     Return whether the number is a possible short number.
     """
-    if isinstance(short_number, PhoneNumber):
-        short_number = national_significant_number(short_number)
-    metadata = PhoneMetadata.short_metadata_for_region(region_dialing_from)
-    if metadata is None:
+    if not _region_dialing_from_matches_number(short_numobj, region_dialing_from):
         return False
-    general_desc = metadata.general_desc
-    return _is_number_possible_for_desc(short_number, general_desc)
+    metadata = PhoneMetadata.short_metadata_for_region(region_dialing_from)
+    if metadata is None:  # pragma no cover
+        return False
+    short_numlen = len(national_significant_number(short_numobj))
+    return (short_numlen in metadata.general_desc.possible_length)
 
 
 def is_possible_short_number(numobj):
@@ -78,44 +101,42 @@ def is_possible_short_number(numobj):
     Return whether the number is a possible short number.
     """
     region_codes = region_codes_for_country_code(numobj.country_code)
-    short_number = national_significant_number(numobj)
+    short_number_len = len(national_significant_number(numobj))
 
     for region in region_codes:
         metadata = PhoneMetadata.short_metadata_for_region(region)
         if metadata is None:
             continue
-        if _is_number_possible_for_desc(short_number, metadata.general_desc):
+        if short_number_len in metadata.general_desc.possible_length:
             return True
     return False
 
 
-def is_valid_short_number_for_region(short_number, region_dialing_from):
+def is_valid_short_number_for_region(short_numobj, region_dialing_from):
     """Tests whether a short number matches a valid pattern in a region.
 
     Note that this doesn't verify the number is actually in use, which is
     impossible to tell by just looking at the number itself.
 
     Arguments:
-    short_number -- the short number to check as a PhoneNumber object or as
-              a string.  (The string variant is deprecated, and will be
-              removed in the next release.)
+    short_numobj -- the short number to check as a PhoneNumber object.
     region_dialing_from -- the region from which the number is dialed
 
     Return whether the short number matches a valid pattern
     """
-    if isinstance(short_number, PhoneNumber):
-        short_number = national_significant_number(short_number)
-    metadata = PhoneMetadata.short_metadata_for_region(region_dialing_from)
-    if metadata is None:
+    if not _region_dialing_from_matches_number(short_numobj, region_dialing_from):
         return False
+    metadata = PhoneMetadata.short_metadata_for_region(region_dialing_from)
+    if metadata is None:  # pragma no cover
+        return False
+    short_number = national_significant_number(short_numobj)
     general_desc = metadata.general_desc
-    if (general_desc.national_number_pattern is None or
-        not _is_number_matching_desc(short_number, general_desc)):
+    if not _matches_possible_number_and_national_number(short_number, general_desc):
         return False
     short_number_desc = metadata.short_code
     if short_number_desc.national_number_pattern is None:  # pragma no cover
         return False
-    return _is_number_matching_desc(short_number, short_number_desc)
+    return _matches_possible_number_and_national_number(short_number, short_number_desc)
 
 
 def is_valid_short_number(numobj):
@@ -132,16 +153,15 @@ def is_valid_short_number(numobj):
     Return whether the short number matches a valid pattern
     """
     region_codes = region_codes_for_country_code(numobj.country_code)
-    short_number = national_significant_number(numobj)
     region_code = _region_code_for_short_number_from_region_list(numobj, region_codes)
     if len(region_codes) > 1 and region_code is not None:
         # If a matching region had been found for the phone number from among two or more regions,
         # then we have already implicitly verified its validity for that region.
         return True
-    return is_valid_short_number_for_region(short_number, region_code)
+    return is_valid_short_number_for_region(numobj, region_code)
 
 
-def expected_cost_for_region(short_number, region_dialing_from):
+def expected_cost_for_region(short_numobj, region_dialing_from):
     """Gets the expected cost category of a short number when dialled from a
     region (however, nothing is implied about its validity). If it is
     important that the number is valid, then its validity must first be
@@ -156,30 +176,36 @@ def expected_cost_for_region(short_number, region_dialing_from):
         # Do something with the cost information here.
 
     Arguments:
-    short_number -- the short number for which we want to know the expected cost category
-              as a PhoneNumber object or as a string.  (The string variant is deprecated,
-              and will be removed in the next release.)
+    short_numobj -- the short number for which we want to know the expected cost category
+              as a PhoneNumber object.
     region_dialing_from -- the region from which the number is dialed
 
     Return the expected cost category for that region of the short
     number. Returns UNKNOWN_COST if the number does not match a cost
     category. Note that an invalid number may match any cost category.
     """
-    if isinstance(short_number, PhoneNumber):
-        short_number = national_significant_number(short_number)
+    if not _region_dialing_from_matches_number(short_numobj, region_dialing_from):
+        return ShortNumberCost.UNKNOWN_COST
     # Note that region_dialing_from may be None, in which case metadata will also be None.
     metadata = PhoneMetadata.short_metadata_for_region(region_dialing_from)
-    if metadata is None:
+    if metadata is None:  # pragma no cover
+        return ShortNumberCost.UNKNOWN_COST
+    short_number = national_significant_number(short_numobj)
+
+    # The possible lengths are not present for a particular sub-type if they match the general
+    # description; for this reason, we check the possible lengths against the general description
+    # first to allow an early exit if possible.
+    if not(len(short_number) in metadata.general_desc.possible_length):
         return ShortNumberCost.UNKNOWN_COST
 
     # The cost categories are tested in order of decreasing expense, since if
     # for some reason the patterns overlap the most expensive matching cost
     # category should be returned.
-    if _is_number_matching_desc(short_number, metadata.premium_rate):
+    if _matches_possible_number_and_national_number(short_number, metadata.premium_rate):
         return ShortNumberCost.PREMIUM_RATE
-    if _is_number_matching_desc(short_number, metadata.standard_rate):
+    if _matches_possible_number_and_national_number(short_number, metadata.standard_rate):
         return ShortNumberCost.STANDARD_RATE
-    if _is_number_matching_desc(short_number, metadata.toll_free):
+    if _matches_possible_number_and_national_number(short_number, metadata.toll_free):
         return ShortNumberCost.TOLL_FREE
     if is_emergency_number(short_number, region_dialing_from):
         # Emergency numbers are implicitly toll-free.
@@ -247,7 +273,7 @@ def _region_code_for_short_number_from_region_list(numobj, region_codes):
     national_number = national_significant_number(numobj)
     for region_code in region_codes:
         metadata = PhoneMetadata.short_metadata_for_region(region_code)
-        if metadata is not None and _is_number_matching_desc(national_number, metadata.short_code):
+        if metadata is not None and _matches_possible_number_and_national_number(national_number, metadata.short_code):
             # The number is valid for this region.
             return region_code
     return None
@@ -343,8 +369,8 @@ def is_emergency_number(number, region_code):
 
 
 def _matches_emergency_number_helper(number, region_code, allow_prefix_match):
-    number = _extract_possible_number(number)
-    if _PLUS_CHARS_PATTERN.match(number):
+    possible_number = _extract_possible_number(number)
+    if _PLUS_CHARS_PATTERN.match(possible_number):
         # Returns False if the number starts with a plus sign. We don't
         # believe dialing the country code before emergency numbers
         # (e.g. +1911) works, but later, if that proves to work, we can add
@@ -353,31 +379,89 @@ def _matches_emergency_number_helper(number, region_code, allow_prefix_match):
     metadata = PhoneMetadata.short_metadata_for_region(region_code.upper(), None)
     if metadata is None or metadata.emergency is None:
         return False
-    emergency_number_pattern = re.compile(metadata.emergency.national_number_pattern)
-    normalized_number = normalize_digits_only(number)
 
+    normalized_number = normalize_digits_only(possible_number)
     allow_prefix_match_for_region = (allow_prefix_match and
                                      (region_code not in _REGIONS_WHERE_EMERGENCY_NUMBERS_MUST_BE_EXACT))
-    if allow_prefix_match_for_region:
-        return emergency_number_pattern.match(normalized_number) is not None
-    else:
-        return fullmatch(emergency_number_pattern, normalized_number) is not None
+    return _match_national_number(normalized_number, metadata.emergency,
+                                  allow_prefix_match_for_region)
 
 
 def is_carrier_specific(numobj):
     """Given a valid short number, determines whether it is carrier-specific
-    (however, nothing is implied about its validity).  If it is important that
-    the number is valid, then its validity must first be checked using
-    is_valid_short_number or is_valid_short_number_for_region.
+    (however, nothing is implied about its validity).  Carrier-specific numbers
+    may connect to a different end-point, or not connect at all, depending
+    on the user's carrier. If it is important that the number is valid, then
+    its validity must first be checked using is_valid_short_number or
+    is_valid_short_number_for_region.
 
     Arguments:
     numobj -- the valid short number to check
 
-    Returns whether the short number is carrier-specific (assuming the input
-    was a valid short number).
+    Returns whether the short number is carrier-specific, assuming the input
+    was a valid short number.
     """
     region_codes = region_codes_for_country_code(numobj.country_code)
     region_code = _region_code_for_short_number_from_region_list(numobj, region_codes)
     national_number = national_significant_number(numobj)
     metadata = PhoneMetadata.short_metadata_for_region(region_code)
-    return (metadata is not None and _is_number_matching_desc(national_number, metadata.carrier_specific))
+    return (metadata is not None and
+            _matches_possible_number_and_national_number(national_number, metadata.carrier_specific))
+
+
+def is_carrier_specific_for_region(numobj, region_dialing_from):
+    """Given a valid short number, determines whether it is carrier-specific when
+    dialed from the given region (however, nothing is implied about its
+    validity). Carrier-specific numbers may connect to a different end-point,
+    or not connect at all, depending on the user's carrier. If it is important
+    that the number is valid, then its validity must first be checked using
+    isValidShortNumber or isValidShortNumberForRegion. Returns false if the
+    number doesn't match the region provided.
+
+    Arguments:
+    numobj -- the valid short number to check
+    region_dialing_from -- the region from which the number is dialed
+
+    Returns whether the short number is carrier-specific, assuming the input
+    was a valid short number.
+    """
+    if not _region_dialing_from_matches_number(numobj, region_dialing_from):
+        return False
+    national_number = national_significant_number(numobj)
+    metadata = PhoneMetadata.short_metadata_for_region(region_dialing_from)
+    return (metadata is not None and
+            _matches_possible_number_and_national_number(national_number, metadata.carrier_specific))
+
+
+def is_sms_service_for_region(numobj, region_dialing_from):
+    """Given a valid short number, determines whether it is an SMS service
+    (however, nothing is implied about its validity). An SMS service is where
+    the primary or only intended usage is to receive and/or send text messages
+    (SMSs). This includes MMS as MMS numbers downgrade to SMS if the other
+    party isn't MMS-capable. If it is important that the number is valid, then
+    its validity must first be checked using is_valid_short_number or
+    is_valid_short_number_for_region.  Returns False if the number doesn't
+    match the region provided.
+
+    Arguments:
+    numobj -- the valid short number to check
+    region_dialing_from -- the region from which the number is dialed
+
+    Returns whether the short number is an SMS service in the provided region,
+    assuming the input was a valid short number.
+    """
+    if not _region_dialing_from_matches_number(numobj, region_dialing_from):
+        return False
+    metadata = PhoneMetadata.short_metadata_for_region(region_dialing_from)
+    return (metadata is not None and
+            _matches_possible_number_and_national_number(national_significant_number(numobj), metadata.sms_services))
+
+
+# TODO: Once we have benchmarked ShortNumberInfo, consider if it is worth
+# keeping this performance optimization.
+def _matches_possible_number_and_national_number(number, number_desc):
+    if number_desc is None:
+        return False
+    if len(number_desc.possible_length) > 0 and not (len(number) in number_desc.possible_length):
+        return False
+    return _match_national_number(number, number_desc, False)

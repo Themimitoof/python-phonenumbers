@@ -29,17 +29,13 @@ __init__.py and per-region data files will be created in the directory.
 # This code was originally developed from the XML file, and the DTD within it.
 # Subsequently, post-processing code was added to match the behaviour of
 # BuildMetadataFromXml.java
-#
-# OPEN QUERIES/ISSUES
-#  - The XML includes territory/areaCodeOptional? elements, which are
-#    PhoneNumberDesc instances; these do not appear to be used in the
-#    libphonenumber Java source code.
 
 # import to allow this code to work with Python2.5
 from __future__ import with_statement
 
 import sys
 import os
+import copy
 import re
 import getopt
 import datetime
@@ -52,6 +48,9 @@ sys.path.insert(0, '../../python')
 from phonenumbers.phonemetadata import NumberFormat, PhoneNumberDesc, PhoneMetadata
 from phonenumbers.phonemetadata import REGION_CODE_FOR_NON_GEO_ENTITY
 from phonenumbers.util import UnicodeMixin, u, prnt
+
+# Global flag for lax XML parsing
+lax = False
 
 # Convention: variables beginning with 'x' are XML objects
 
@@ -146,12 +145,45 @@ def get_true_attrib(xtag, aname):
         return False
 
 
+def get_optional_true_attrib(xtag, aname):
+    if aname in xtag.attrib:
+        if xtag.attrib[aname] != 'true':
+            raise Exception("Unexpected value %s for %s attribute" % (xtag.attrib[aname], aname))
+        return True
+    else:
+        return None
+
+
 def _dews_re(re_str):
     """Remove all whitespace in given regular expression string"""
     if re_str is None:
         return None
     else:
         return re.sub(r'\s', '', re_str)
+
+
+_NUM_RE = re.compile('\d+')
+_RANGE_RE = re.compile(r'\[(?P<min>\d+)-(?P<max>\d+)\]')
+
+
+def _extract_lengths(ll):
+    """Extract list of possible lengths from string"""
+    results = set()
+    if ll is None:
+        return []
+    for val in ll.split(','):
+        m = _NUM_RE.match(val)
+        if m:
+            results.add(int(val))
+        else:
+            m = _RANGE_RE.match(val)
+            if m is None:
+                raise Exception("Unrecognized length specification %s" % ll)
+            min = int(m.group('min'))
+            max = int(m.group('max'))
+            for ii in range(min, max + 1):
+                results.add(ii)
+    return sorted(list(results))
 
 
 def _expand_formatting_rule(rule, national_prefix):
@@ -210,13 +242,13 @@ class XNumberFormat(UnicodeMixin):
             # Find the IMPLIED attribute(s)
             self.o.domestic_carrier_code_formatting_rule = xtag.get('carrierCodeFormattingRule', None)
             self.o.national_prefix_formatting_rule = xtag.get('nationalPrefixFormattingRule', None)
-            self.o.national_prefix_optional_when_formatting = get_true_attrib(xtag, 'nationalPrefixOptionalWhenFormatting')
+            self.o.national_prefix_optional_when_formatting = get_optional_true_attrib(xtag, 'nationalPrefixOptionalWhenFormatting')
 
             # Post-process formatting rules for expansions and defaults
             if self.o.national_prefix_formatting_rule is not None:
                 # expand abbreviations
                 self.o.national_prefix_formatting_rule = _expand_formatting_rule(self.o.national_prefix_formatting_rule,
-                                                                                   national_prefix)
+                                                                                 national_prefix)
             else:
                 # set to territory-wide formatting rule
                 self.o.national_prefix_formatting_rule = national_prefix_formatting_rule
@@ -224,14 +256,14 @@ class XNumberFormat(UnicodeMixin):
                 # Replace '$1' etc  with '\1' to match Python regexp group reference format
                 self.o.national_prefix_formatting_rule = re.sub('\$', r'\\', self.o.national_prefix_formatting_rule)
 
-            if not self.o.national_prefix_optional_when_formatting:
-                # If attrib is False, it was missing and inherits territory-wide value
+            if not self.o.national_prefix_optional_when_formatting and national_prefix_optional_when_formatting:
+                # If attrib is None, it was missing and inherits territory-wide value
                 self.o.national_prefix_optional_when_formatting = national_prefix_optional_when_formatting
 
             if self.o.domestic_carrier_code_formatting_rule is not None:
                 # expand abbreviations
                 self.o.domestic_carrier_code_formatting_rule = _expand_formatting_rule(self.o.domestic_carrier_code_formatting_rule,
-                                                                                         national_prefix)
+                                                                                       national_prefix)
             else:
                 # set to territory-wide formatting rule
                 self.o.domestic_carrier_code_formatting_rule = carrier_code_formatting_rule
@@ -278,33 +310,61 @@ class XNumberFormat(UnicodeMixin):
 
 class XPhoneNumberDesc(UnicodeMixin):
     """Parse PhoneNumberDesc object from XML element"""
-    def __init__(self, xtag, template=None, fill_na=True):
+    def __init__(self, xterritory, tag, template=None, general_desc=False):
+        id = xterritory.attrib['id']
+        xtag = _get_unique_child(xterritory, tag)
+        self.xtag = xtag
+        if xtag is None:
+            # When a PhoneNumberDesc is absent, the upstream Java code builds an object
+            # of form PhoneNumberDesc(national_number_pattern="NA", possible_length=(-1,)).
+            # The Python code uses a desc of None for this case, to keep the generated
+            # code size smaller.
+            self.o = None
+            return
         self.o = PhoneNumberDesc()
         self.o._mutable = True
         self.o.national_number_pattern = None
-        self.o.possible_number_pattern = None
+        self.o.possible_number_pattern = None  # retired
+        # Set possible length info to None for now, to mark that it wasn't specified
+        # for this numberDesc.
+        self.o.possible_length = None
+        self.o.possible_length_local_only = None
         self.o.example_number = None
-        if xtag is None:
-            if fill_na:
-                self.o.national_number_pattern = DATA_NA
-                self.o.possible_number_pattern = DATA_NA
-                return
-        # Start with the template values
-        if template is not None:
-            self.o.national_number_pattern = template.national_number_pattern
-            self.o.possible_number_pattern = template.possible_number_pattern
-            self.o.example_number = template.example_number
-        # Overwrite with any values in the XML
-        if xtag is not None:
-            national_number_pattern = _dews_re(_get_unique_child_value(xtag, 'nationalNumberPattern'))
-            if national_number_pattern is not None:
-                self.o.national_number_pattern = national_number_pattern
-            possible_number_pattern = _dews_re(_get_unique_child_value(xtag, 'possibleNumberPattern'))
-            if possible_number_pattern is not None:
-                self.o.possible_number_pattern = possible_number_pattern
-            example_number = _get_unique_child_value(xtag, 'exampleNumber')
-            if example_number is not None:
-                self.o.example_number = example_number
+
+        # Always expect a nationalNumberPattern element
+        self.o.national_number_pattern = _dews_re(_get_unique_child_value(xtag, 'nationalNumberPattern'))
+        if self.o.national_number_pattern is None:
+            if lax:
+                if template is not None:
+                    self.o.national_number_pattern = template.national_number_pattern
+            else:
+                raise Exception("Missing required nationalNumberPattern element in %s.%s" % (id, tag))
+
+        # An exampleNumber element is present iff this is not the generalDesc
+        example_number = _get_unique_child_value(xtag, 'exampleNumber')
+        if (not lax) and (not general_desc) and (example_number is None):
+            raise Exception("Missing required exampleNumber element in %s.%s" % (id, tag))
+        if general_desc and example_number is not None:
+            if lax:
+                example_number = None
+            else:
+                raise Exception("Unexpected exampleNumber element for generalDesc in %s.%s" % (id, tag))
+        self.o.example_number = example_number
+
+        # A possibleLengths element is present iff this is not the generalDesc
+        possible_lengths = _get_unique_child(xtag, 'possibleLengths')
+        if (not lax) and (not general_desc) and (possible_lengths is None):
+            raise Exception("Missing required possibleLengths element in %s.%s" % (id, tag))
+        if general_desc and possible_lengths is not None:
+            raise Exception("Unexpected possibleLengths for generalDesc in %s.%s" % (id, tag))
+        if possible_lengths is not None:
+            national_lengths = possible_lengths.attrib['national']  # REQUIRED attribute
+            if national_lengths == "-1":
+                # -1 used to be a special possibleLengths value, no longer allowed.
+                raise Exception("Found unexpected %s.%s.possibleLength.national==-1", (id, tag))
+            self.o.possible_length = _extract_lengths(national_lengths)
+            local_lengths = possible_lengths.get('localOnly', None)  # IMPLIED attribute
+            self.o.possible_length_local_only = _extract_lengths(local_lengths)
 
     def __unicode__(self):
         return u(self.o)
@@ -370,46 +430,78 @@ class XTerritory(UnicodeMixin):
         self.o.leading_zero_possible = get_true_attrib(xterritory, 'leadingZeroPossible')
         self.o.mobile_number_portable_region = get_true_attrib(xterritory, 'mobileNumberPortableRegion')
 
-        # Retrieve the various PhoneNumberDesc elements.  The general_desc is
-        # first and most important; it will be used to fill out missing fields in
-        # many of the other PhoneNumberDesc elements.
-        self.o.general_desc = XPhoneNumberDesc(_get_unique_child(xterritory, 'generalDesc'),
-                                               fill_na=False)
-        # areaCodeOptional is in the XML but not used in the code.
-        self.o.area_code_optional = XPhoneNumberDesc(_get_unique_child(xterritory, 'areaCodeOptional'),
-                                                     template=self.o.general_desc.o)
+        # Retrieve the various PhoneNumberDesc elements, which mostly have the form:
+        #   (nationalNumberPattern, possibleLengths, exampleNumber)
+        # However the general_desc is first and special; it has form:
+        #   (nationalNumberPattern)
+        # and it will be used to fill out missing fields in many of the other PhoneNumberDesc elements.
+        self.o.general_desc = XPhoneNumberDesc(xterritory, 'generalDesc', general_desc=True).o
+
+        self.o.toll_free = XPhoneNumberDesc(xterritory, 'tollFree', template=self.o.general_desc).o
+        self.o.premium_rate = XPhoneNumberDesc(xterritory, 'premiumRate', template=self.o.general_desc).o
         if not short_data:
-            self.o.fixed_line = XPhoneNumberDesc(_get_unique_child(xterritory, 'fixedLine'),
-                                                 template=self.o.general_desc.o, fill_na=False)
-            self.o.mobile = XPhoneNumberDesc(_get_unique_child(xterritory, 'mobile'),
-                                             template=self.o.general_desc.o, fill_na=False)
-            self.o.pager = XPhoneNumberDesc(_get_unique_child(xterritory, 'pager'),
-                                            template=self.o.general_desc.o)
-            self.o.shared_cost = XPhoneNumberDesc(_get_unique_child(xterritory, 'sharedCost'),
-                                                  template=self.o.general_desc.o)
-            self.o.personal_number = XPhoneNumberDesc(_get_unique_child(xterritory, 'personalNumber'),
-                                                      template=self.o.general_desc.o)
-            self.o.voip = XPhoneNumberDesc(_get_unique_child(xterritory, 'voip'),
-                                           template=self.o.general_desc.o)
-            self.o.uan = XPhoneNumberDesc(_get_unique_child(xterritory, 'uan'),
-                                          template=self.o.general_desc.o)
-            self.o.voicemail = XPhoneNumberDesc(_get_unique_child(xterritory, 'voicemail'),
-                                                template=self.o.general_desc.o)
-            self.o.no_international_dialling = XPhoneNumberDesc(_get_unique_child(xterritory, 'noInternationalDialling'),
-                                                                template=self.o.general_desc.o)
+            # Mobile and fixed-line descriptions do not inherit anything from the general_desc
+            self.o.fixed_line = XPhoneNumberDesc(xterritory, 'fixedLine').o
+            self.o.mobile = XPhoneNumberDesc(xterritory, 'mobile').o
+
+            self.o.pager = XPhoneNumberDesc(xterritory, 'pager', template=self.o.general_desc).o
+            self.o.shared_cost = XPhoneNumberDesc(xterritory, 'sharedCost', template=self.o.general_desc).o
+            self.o.personal_number = XPhoneNumberDesc(xterritory, 'personalNumber', template=self.o.general_desc).o
+            self.o.voip = XPhoneNumberDesc(xterritory, 'voip', template=self.o.general_desc).o
+            self.o.uan = XPhoneNumberDesc(xterritory, 'uan', template=self.o.general_desc).o
+            self.o.voicemail = XPhoneNumberDesc(xterritory, 'voicemail', template=self.o.general_desc).o
+            self.o.no_international_dialling = XPhoneNumberDesc(xterritory, 'noInternationalDialling', template=self.o.general_desc).o
+
+            # Skip noInternationalDialling when combining possible length information
+            sub_descs = (self.o.toll_free, self.o.premium_rate, self.o.fixed_line, self.o.mobile,
+                         self.o.pager, self.o.shared_cost, self.o.personal_number, self.o.voip,
+                         self.o.uan, self.o.voicemail)
+            all_descs = (self.o.toll_free, self.o.premium_rate, self.o.fixed_line, self.o.mobile,
+                         self.o.pager, self.o.shared_cost, self.o.personal_number, self.o.voip,
+                         self.o.uan, self.o.voicemail, self.o.no_international_dialling)
         else:
-            self.o.standard_rate = XPhoneNumberDesc(_get_unique_child(xterritory, 'standardRate'),
-                                                    template=self.o.general_desc.o)
-            self.o.short_code = XPhoneNumberDesc(_get_unique_child(xterritory, 'shortCode'),
-                                                 template=self.o.general_desc.o)
-            self.o.carrier_specific = XPhoneNumberDesc(_get_unique_child(xterritory, 'carrierSpecific'),
-                                                       template=self.o.general_desc.o)
-            self.o.emergency = XPhoneNumberDesc(_get_unique_child(xterritory, 'emergency'),
-                                                template=self.o.general_desc.o)
-        self.o.toll_free = XPhoneNumberDesc(_get_unique_child(xterritory, 'tollFree'),
-                                            template=self.o.general_desc.o)
-        self.o.premium_rate = XPhoneNumberDesc(_get_unique_child(xterritory, 'premiumRate'),
-                                               template=self.o.general_desc.o)
+            self.o.standard_rate = XPhoneNumberDesc(xterritory, 'standardRate', template=self.o.general_desc).o
+            self.o.short_code = XPhoneNumberDesc(xterritory, 'shortCode', template=self.o.general_desc).o
+            self.o.carrier_specific = XPhoneNumberDesc(xterritory, 'carrierSpecific', template=self.o.general_desc).o
+            self.o.sms_services = XPhoneNumberDesc(xterritory, 'smsServices', template=self.o.general_desc).o
+            self.o.emergency = XPhoneNumberDesc(xterritory, 'emergency', template=self.o.general_desc).o
+            # For short number metadata, copy the lengths from the "short code" section only.
+            sub_descs = (self.o.short_code,)
+            all_descs = (self.o.toll_free, self.o.premium_rate, self.o.standard_rate,
+                         self.o.short_code, self.o.carrier_specific, self.o.emergency)
+
+        # Build the possible length information for general_desc based on all the different types of number.
+        possible_lengths = set()
+        local_lengths = set()
+        for desc in sub_descs:
+            if desc is None:
+                continue
+            if desc.possible_length is not None:
+                possible_lengths.update(desc.possible_length)
+            if desc.possible_length_local_only is not None:
+                local_lengths.update(desc.possible_length_local_only)
+        self.o.general_desc.possible_length = sorted(list(possible_lengths))
+        self.o.general_desc.possible_length_local_only = sorted(list(local_lengths))
+        if -1 in self.o.general_desc.possible_length:
+            raise Exception("Found -1 length in general_desc.possible_length")
+        if -1 in self.o.general_desc.possible_length_local_only:
+            raise Exception("Found -1 length in general_desc.possible_length_local_only")
+
+        # Now that the union of length information is available, trickle it back down to those types
+        # of number that didn't specify any length information (indicated by having those fields set
+        # to None).  But only if they're non
+        for desc in all_descs:
+            if desc is None:
+                continue
+            if desc.national_number_pattern is None:
+                desc.possible_length = []
+                desc.possible_length_local_only = []
+                continue
+            if desc.possible_length is None:
+                desc.possible_length = copy.copy(self.o.general_desc.possible_length)
+            if desc.possible_length_local_only is None:
+                desc.possible_length_local_only = copy.copy(self.o.general_desc.o.possible_length_local_only)
+
         # Look for available formats
         self.has_explicit_intl_format = False
         formats = _get_unique_child(xterritory, "availableFormats")
@@ -578,7 +670,7 @@ def _standalone(argv):
     alternate = None
     short_data = False
     try:
-        opts, args = getopt.getopt(argv, "hsa:", ("help", "short", "alt="))
+        opts, args = getopt.getopt(argv, "hlsa:", ("help", "lax", "short", "alt="))
     except getopt.GetoptError:
         prnt(__doc__, file=sys.stderr)
         sys.exit(1)
@@ -588,6 +680,9 @@ def _standalone(argv):
             sys.exit(1)
         elif opt in ("-s", "--short"):
             short_data = True
+        elif opt in ("-l", "--lax"):
+            global lax
+            lax = True
         elif opt in ("-a", "--alt"):
             alternate = arg
         else:

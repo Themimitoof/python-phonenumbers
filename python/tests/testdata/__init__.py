@@ -1,5 +1,5 @@
 """Auto-generated file, do not edit by hand."""
-# Copyright (C) 2010-2016 The Libphonenumber Authors
+# Copyright (C) 2010-2018 The Libphonenumber Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,8 +15,8 @@
 
 from phonenumbers.phonemetadata import PhoneMetadata
 
-_AVAILABLE_REGION_CODES = ['AD','AE','AO','AR','AU','BB','BR','BS','BY','CA','CC','CN','CX','DE','FR','GB','GG','HU','IT','JP','KR','MX','NZ','PL','RE','SE','SG','US','YT']
-_AVAILABLE_NONGEO_COUNTRY_CODES = [800, 979]
+_AVAILABLE_REGION_CODES = ['AD','AE','AM','AO','AR','AU','BB','BR','BS','BY','CA','CC','CN','CX','DE','FR','GB','GG','HU','IT','JP','KR','MX','NZ','PL','RE','SE','SG','TA','US','YT']
+_AVAILABLE_NONGEO_COUNTRY_CODES = [800, 882, 979]
 
 def _load_region(code):
     __import__("region_%s" % code, globals(), locals(),
@@ -55,9 +55,12 @@ _COUNTRY_CODE_TO_REGION_CODE = {
     86: ("CN",),
     244: ("AO",),
     262: ("RE", "YT",),
+    290: ("TA",),
+    374: ("AM",),
     375: ("BY",),
     376: ("AD",),
     800: ("001",),
+    882: ("001",),
     971: ("AE",),
     979: ("001",),
 }
